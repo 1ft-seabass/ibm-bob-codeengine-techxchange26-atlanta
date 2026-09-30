@@ -4,15 +4,268 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IBM Code Engine + Hono</title>
+
+  <!-- Bootstrap 5.3.3 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+
   <style>
-    body { font-family: sans-serif; max-width: 640px; margin: 80px auto; padding: 0 1rem; }
-    h1 { color: #1f2328; }
-    p { color: #57606a; }
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #000; }
+
+    #babylon-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      touch-action: none;
+    }
+
+    #app {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .ui-btn {
+      pointer-events: auto;
+    }
+
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .toast-msg {
+      background: rgba(30,30,30,0.92);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      pointer-events: none;
+      animation: fadein 0.2s ease;
+    }
+
+    @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body>
-  <h1>Hello from IBM Code Engine!</h1>
-  <p>Hono サーバーが正常に起動しています。</p>
-  <p><a href="/api/hello">/api/hello を確認する</a></p>
+
+<!-- Babylon.js キャンバス（背景） -->
+<canvas id="babylon-canvas"></canvas>
+
+<!-- Vue3 オーバーレイ UI -->
+<div id="app">
+  <!-- ハンバーガーボタン -->
+  <button
+    class="btn btn-dark ui-btn"
+    style="position:fixed;top:16px;left:16px;"
+    data-bs-toggle="offcanvas"
+    data-bs-target="#drawer"
+    aria-controls="drawer"
+  >
+    <span>☰</span>
+  </button>
+
+  <!-- LED バッジ（右上） -->
+  <div style="position:fixed;top:20px;right:20px;" class="ui-btn">
+    <span :class="ledOn ? 'badge bg-danger' : 'badge bg-secondary'" style="font-size:14px;">
+      LED {{ ledOn ? 'ON' : 'OFF' }}
+    </span>
+  </div>
+
+  <!-- Bootstrap Offcanvas ドロワー -->
+  <div class="offcanvas offcanvas-start ui-btn" tabindex="-1" id="drawer" aria-labelledby="drawerLabel"
+       style="max-width:260px;">
+    <div class="offcanvas-header">
+      <h5 class="offcanvas-title" id="drawerLabel">コントロール</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column gap-3">
+
+      <!-- 回転トグル -->
+      <button class="btn ui-btn" :class="rotating ? 'btn-primary' : 'btn-outline-primary'" @click="toggleRotate">
+        {{ rotating ? '⏹ 回転を止める' : '▶ 回転を再開' }}
+      </button>
+
+      <!-- アングルリセット -->
+      <button class="btn btn-outline-secondary ui-btn" @click="resetCamera">
+        🎯 アングルリセット
+      </button>
+
+      <!-- LED 状態バッジ（ドロワー内） -->
+      <div>
+        <span class="text-muted small">LED 状態:</span><br>
+        <span :class="ledOn ? 'badge bg-danger' : 'badge bg-secondary'" style="font-size:13px;">
+          {{ ledOn ? 'ON' : 'OFF' }}
+        </span>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- トースト表示エリア -->
+<div id="toast-container"></div>
+
+<!-- Babylon.js 6.49.0 -->
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+
+<!-- Bootstrap 5.3.3 JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Vue 3.4.21 グローバルビルド -->
+<script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+
+<script>
+// ─────────────────────────────────────────────
+// Babylon.js シーン
+// ─────────────────────────────────────────────
+(function initBabylon() {
+  const canvas = document.getElementById('babylon-canvas');
+  const engine = new BABYLON.Engine(canvas, true);
+
+  // カメラ初期値
+  const INIT_ALPHA  = -Math.PI / 2;
+  const INIT_BETA   = Math.PI / 3;
+  const INIT_RADIUS = 5;
+
+  let camera, box;
+
+  const scene = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0.08, 0.08, 0.12, 1);
+
+  // カメラ
+  camera = new BABYLON.ArcRotateCamera('cam', INIT_ALPHA, INIT_BETA, INIT_RADIUS, BABYLON.Vector3.Zero(), scene);
+  camera.attachControl(canvas, true);
+  camera.lowerRadiusLimit = 1.5;
+  camera.upperRadiusLimit = 20;
+
+  // ライト
+  const light = new BABYLON.HemisphericLight('light', new BABYLON.Vector3(1, 1, 0), scene);
+  light.intensity = 1.0;
+
+  // 立方体
+  box = BABYLON.MeshBuilder.CreateBox('box', { size: 1 }, scene);
+  const mat = new BABYLON.StandardMaterial('boxMat', scene);
+  mat.diffuseColor = new BABYLON.Color3(0.5, 0.5, 0.5); // 初期: 灰色
+  box.material = mat;
+
+  // クリック（ActionManager）
+  box.actionManager = new BABYLON.ActionManager(scene);
+  box.actionManager.registerAction(
+    new BABYLON.ExecuteCodeAction(BABYLON.ActionManager.OnPickTrigger, function () {
+      if (window.__vueApp && window.__vueApp.onBoxClick) {
+        window.__vueApp.onBoxClick();
+      }
+    })
+  );
+
+  // レンダーループ
+  let rot = 0;
+  engine.runRenderLoop(function () {
+    if (window.__vueRotating !== false) {
+      rot += 0.01;
+      box.rotation.y = rot;
+      box.rotation.x = rot * 0.4;
+    }
+    scene.render();
+  });
+
+  window.addEventListener('resize', function () { engine.resize(); });
+
+  // Vue から参照するグローバル
+  window.__babylon = {
+    setBoxColor: function (r, g, b) {
+      mat.diffuseColor = new BABYLON.Color3(r, g, b);
+    },
+    resetCamera: function () {
+      camera.alpha  = INIT_ALPHA;
+      camera.beta   = INIT_BETA;
+      camera.radius = INIT_RADIUS;
+      camera.target = BABYLON.Vector3.Zero();
+    }
+  };
+})();
+
+// ─────────────────────────────────────────────
+// トースト
+// ─────────────────────────────────────────────
+function showToast(msg) {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = 'toast-msg';
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(function () {
+    el.style.opacity = '0';
+    el.style.transition = 'opacity 0.3s';
+    setTimeout(function () { container.removeChild(el); }, 350);
+  }, 5000);
+}
+
+// ─────────────────────────────────────────────
+// Vue3 アプリ
+// ─────────────────────────────────────────────
+const { createApp, ref } = Vue;
+
+createApp({
+  setup() {
+    const rotating = ref(true);
+    const ledOn    = ref(false);
+    const requesting = ref(false);
+
+    // 自転フラグをグローバルに同期
+    window.__vueRotating = true;
+
+    function toggleRotate() {
+      rotating.value = !rotating.value;
+      window.__vueRotating = rotating.value;
+    }
+
+    function resetCamera() {
+      if (window.__babylon) window.__babylon.resetCamera();
+    }
+
+    async function onBoxClick() {
+      if (requesting.value) return;
+      requesting.value = true;
+
+      const nextOn  = !ledOn.value;
+      const endpoint = nextOn ? '/api/led/on' : '/api/led/off';
+
+      try {
+        const res = await fetch(endpoint, { method: 'POST' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        ledOn.value = nextOn;
+        if (window.__babylon) {
+          window.__babylon.setBoxColor(
+            nextOn ? 0.9 : 0.5,
+            nextOn ? 0.1 : 0.5,
+            nextOn ? 0.1 : 0.5
+          );
+        }
+      } catch (e) {
+        showToast('APIエラー: ' + e.message);
+        // 色・状態はクリック前のまま維持（楽観的更新なし）
+      } finally {
+        requesting.value = false;
+      }
+    }
+
+    // Vue 側の関数をグローバルに公開（Babylon から呼ぶ）
+    window.__vueApp = { onBoxClick };
+
+    return { rotating, ledOn, toggleRotate, resetCamera };
+  }
+}).mount('#app');
+</script>
 </body>
 </html>
