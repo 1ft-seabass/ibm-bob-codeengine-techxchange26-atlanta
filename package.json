@@ -13,7 +13,10 @@
     "start": "node server.js",
     "build:image_build": "node scripts/ce-run.js buildrun",
     "build:update_app": "node scripts/ce-run.js update_app",
-    "build": "npm run build:image_build && npm run build:update_app"
+    "build": "npm run build:image_build && npm run build:update_app",
+    "env:create": "node scripts/ce-run.js ibmcloud ce secret create --name mqtt-secret --from-env-file .env.production",
+    "env:update": "node scripts/ce-run.js ibmcloud ce secret update --name mqtt-secret --from-env-file .env.production",
+    "env:attach": "node scripts/ce-run.js ibmcloud ce application update --name $CE_APP_NAME --env-from-secret mqtt-secret"
   },
   "simple-git-hooks": {
     "pre-commit": "node .security-check/cli.js pre-commit"
@@ -32,7 +35,9 @@
   "homepage": "https://github.com/1ft-seabass/ibm-bob-codeengine-techxchange26-atlanta#readme",
   "dependencies": {
     "@hono/node-server": "^1.0.0",
-    "hono": "^4.0.0"
+    "dotenv": "^18.0.4",
+    "hono": "^4.0.0",
+    "mqtt": "^5.16.0"
   },
   "devDependencies": {
     "@secretlint/secretlint-rule-preset-recommend": "^13.0.6",
