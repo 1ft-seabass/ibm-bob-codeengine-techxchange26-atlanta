@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# setup-securecheck: gitleaksバイナリ・実行ログ（ローカル専用、リポジトリに含めない）
+.security-check/bin/
+.security-check/logs/
+
+# パターン導入時の一時取得ディレクトリ（README/quickstart.mdのdegitコマンドで使用）
+tmp/
