@@ -13,7 +13,8 @@
     "start": "node server.js",
     "build:image_build": "node scripts/ce-run.js buildrun",
     "build:update_app": "node scripts/ce-run.js update_app",
-    "build": "npm run build:image_build && npm run build:update_app",
+    "build:cleanup": "node scripts/ce-cleanup.js",
+    "build": "npm run build:image_build && npm run build:update_app && npm run build:cleanup",
     "env:create": "node scripts/ce-run.js ibmcloud ce secret create --name mqtt-secret --from-env-file .env.production",
     "env:update": "node scripts/ce-run.js ibmcloud ce secret update --name mqtt-secret --from-env-file .env.production",
     "env:attach": "node scripts/ce-run.js ibmcloud ce application update --name $CE_APP_NAME --env-from-secret mqtt-secret"
