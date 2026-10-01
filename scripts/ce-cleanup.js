@@ -26,7 +26,7 @@ if (fs.existsSync(envFile)) {
 }
 
 // CE_BUILD_IMAGE から ICR region と namespace を取得
-// 例: private.jp.icr.io/ce--6b4c2-1e6cl2vzbcl7/build-hono-app-build:latest
+// 例: private.jp.icr.io/<namespace>/build-hono-app-build:latest
 const buildImage = envVars.CE_BUILD_IMAGE || '';
 const match = buildImage.match(/private\.([\w-]+\.icr\.io)\/([\w-]+)\/([\w-]+):latest/);
 if (!match) {
@@ -34,7 +34,7 @@ if (!match) {
   process.exit(1);
 }
 const icrRegion   = match[1];               // jp.icr.io
-const namespace   = match[2];               // ce--6b4c2-1e6cl2vzbcl7
+const namespace   = match[2];               // ICR namespace
 const repository  = match[3];               // build-hono-app-build
 const publicRepo  = `jp.${icrRegion.replace(/^jp\./, '')}`;  // jp.icr.io
 const fullRepo    = `${publicRepo}/${namespace}/${repository}`;
