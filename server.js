@@ -3,16 +3,19 @@ require('dotenv').config();
 const { Hono } = require('hono');
 const { serve } = require('@hono/node-server');
 const { serveStatic } = require('@hono/node-server/serve-static');
+const { WebSocketServer } = require('ws');
 const mqtt = require('mqtt');
 
 // ─────────────────────────────────────────────
 // MQTT クライアント
 // ─────────────────────────────────────────────
-const MQTT_HOST     = process.env.MQTT_HOST;
-const MQTT_PORT     = process.env.MQTT_PORT;
-const MQTT_PROTOCOL = process.env.MQTT_PROTOCOL;
-const MQTT_USERNAME = process.env.MQTT_USERNAME;
-const MQTT_PASSWORD = process.env.MQTT_PASSWORD;
+const MQTT_HOST              = process.env.MQTT_HOST;
+const MQTT_PORT              = process.env.MQTT_PORT;
+const MQTT_PROTOCOL          = process.env.MQTT_PROTOCOL;
+const MQTT_USERNAME          = process.env.MQTT_USERNAME;
+const MQTT_PASSWORD          = process.env.MQTT_PASSWORD;
+const MQTT_IOT_CONTROL_LED   = process.env.MQTT_IOT_CONTROL_LED;
+const MQTT_IOT_CONTROL_SERVO = process.env.MQTT_IOT_CONTROL_SERVO;
 
 let mqttClient = null;
 
@@ -84,27 +87,53 @@ app.get('/api/hello', (c) => {
   return c.json({ message: 'Hello from Hono!' });
 });
 
-app.post('/api/led/on', async (c) => {
+app.post('/api/device/on', async (c) => {
   try {
-    await publishAsync('codeengine/3d/click/on', JSON.stringify({ type: 'click', value: 'on' }));
+    await Promise.all([
+      publishAsync(MQTT_IOT_CONTROL_LED,   JSON.stringify({ type: 'led', r: 255, g: 255, b: 255 })),
+      publishAsync(MQTT_IOT_CONTROL_SERVO, JSON.stringify({ direction: 'cw', speed: 3 })),
+    ]);
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ ok: false, error: err.message }, 500);
   }
 });
 
-app.post('/api/led/off', async (c) => {
+app.post('/api/device/off', async (c) => {
   try {
-    await publishAsync('codeengine/3d/click/off', JSON.stringify({ type: 'click', value: 'off' }));
+    await Promise.all([
+      publishAsync(MQTT_IOT_CONTROL_LED,   JSON.stringify({ type: 'led', r: 0, g: 0, b: 0 })),
+      publishAsync(MQTT_IOT_CONTROL_SERVO, JSON.stringify({ command: 'stop' })),
+    ]);
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ ok: false, error: err.message }, 500);
   }
 });
 
+// ─────────────────────────────────────────────
+// HTTP サーバー + WebSocket サーバー
+// ─────────────────────────────────────────────
 // IBM Code Engine はコンテナに PORT 環境変数を自動設定するため、必ず process.env.PORT を優先すること
 const port = process.env.PORT || 8080;
 
-serve({ fetch: app.fetch, port }, (info) => {
+// serve() は http.Server 互換オブジェクトを返すので、
+// そのまま WebSocketServer にアタッチする。
+const httpServer = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`app listening at http://localhost:${info.port}`);
+});
+
+const wss = new WebSocketServer({ server: httpServer });
+
+// サーバー時刻を全クライアントへ 1 秒ごとに push
+setInterval(() => {
+  const payload = JSON.stringify({ type: 'clock', time: new Date().toISOString() });
+  wss.clients.forEach((client) => {
+    if (client.readyState === client.OPEN) client.send(payload);
+  });
+}, 1000);
+
+wss.on('connection', (ws) => {
+  console.log('[ws] client connected');
+  ws.on('close', () => console.log('[ws] client disconnected'));
 });

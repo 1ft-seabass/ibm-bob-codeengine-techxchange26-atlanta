@@ -54,6 +54,15 @@
     }
 
     @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    .server-clock {
+      font-size: 11px;
+      color: #6c757d;
+      border-top: 1px solid #dee2e6;
+      padding-top: 8px;
+      margin-top: auto;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
@@ -108,6 +117,13 @@
         </span>
       </div>
 
+      <!-- サーバー時刻 -->
+      <div class="server-clock">
+        <div class="text-muted" style="font-size:10px;margin-bottom:2px;">サーバー時刻</div>
+        <span v-if="serverTime">{{ serverTime }}</span>
+        <span v-else class="text-muted">接続中…</span>
+      </div>
+
     </div>
   </div>
 </div>
@@ -137,7 +153,7 @@
   const INIT_BETA   = Math.PI / 3;
   const INIT_RADIUS = 5;
 
-  let camera, box;
+  let camera, box, mat;
 
   const scene = new BABYLON.Scene(engine);
   scene.clearColor = new BABYLON.Color4(0.08, 0.08, 0.12, 1);
@@ -148,15 +164,87 @@
   camera.lowerRadiusLimit = 1.5;
   camera.upperRadiusLimit = 20;
 
+  // ─── ドラッグ残りバグ修正 ────────────────────
+  // canvas の外や別ウィンドウでマウスを離したときにドラッグが残る問題を解消する。
+  // pointercapture を使い、pointerup / pointercancel / lostpointercapture の
+  // いずれでもドラッグを強制解除する。
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointercancel', (e) => {
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('lostpointercapture', () => {
+    // Babylon の内部ドラッグ状態をリセット
+    scene.simulatePointerUp(new BABYLON.PointerEventTypes());
+    camera._isDragging = false;
+  });
+
   // ライト
   const light = new BABYLON.HemisphericLight('light', new BABYLON.Vector3(1, 1, 0), scene);
   light.intensity = 1.0;
 
   // 立方体
   box = BABYLON.MeshBuilder.CreateBox('box', { size: 1 }, scene);
-  const mat = new BABYLON.StandardMaterial('boxMat', scene);
+  mat = new BABYLON.StandardMaterial('boxMat', scene);
   mat.diffuseColor = new BABYLON.Color3(0.5, 0.5, 0.5); // 初期: 灰色
   box.material = mat;
+
+  // ─── 立方体上部テキストラベル ────────────────
+  // 動的テクスチャに「IBM TechXchange Atlanta Sample」を描画して
+  // 透明な平面メッシュとして立方体の上部に配置する。
+  const labelPlane = BABYLON.MeshBuilder.CreatePlane('label', { width: 2.2, height: 0.5 }, scene);
+  labelPlane.position.y = 0.9;   // 立方体（size=1）の上面より少し上
+  labelPlane.rotation.x = 0;     // カメラ方向に向ける（Billboard で上書き）
+  labelPlane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y; // 水平回転のみ追従
+
+  const labelTex = new BABYLON.DynamicTexture('labelTex', { width: 512, height: 128 }, scene, false);
+  const ctx = labelTex.getContext();
+  ctx.clearRect(0, 0, 512, 128);
+
+  // 半透明タイル背景
+  ctx.fillStyle = 'rgba(0, 0, 0, 0)';
+  ctx.fillRect(0, 0, 512, 128);
+
+  // テキスト（白・中央寄せ）
+  ctx.font = 'bold 36px sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('IBM TechXchange', 256, 48);
+  ctx.font = 'bold 30px sans-serif';
+  ctx.fillText('Atlanta Sample', 256, 90);
+  labelTex.update();
+
+  const labelMat = new BABYLON.StandardMaterial('labelMat', scene);
+  labelMat.diffuseTexture  = labelTex;
+  labelMat.opacityTexture  = labelTex;
+  labelMat.emissiveColor   = new BABYLON.Color3(1, 1, 1);
+  labelMat.backFaceCulling = false;
+  labelMat.hasAlpha        = true;
+  labelPlane.material = labelMat;
+
+  // ─── ドラッグ中に黄色く ──────────────────────
+  let savedColor = null;
+
+  scene.onPointerObservable.add((pointerInfo) => {
+    if (pointerInfo.type === BABYLON.PointerEventTypes.POINTERDOWN &&
+        pointerInfo.pickInfo && pointerInfo.pickInfo.hit &&
+        pointerInfo.pickInfo.pickedMesh === box) {
+      // ドラッグ開始: 現在色を保存して黄色に
+      savedColor = mat.diffuseColor.clone();
+      mat.diffuseColor = new BABYLON.Color3(1.0, 0.85, 0.0);
+    } else if (pointerInfo.type === BABYLON.PointerEventTypes.POINTERUP) {
+      // ドラッグ終了: 保存色を復元
+      if (savedColor !== null) {
+        mat.diffuseColor = savedColor;
+        savedColor = null;
+      }
+    }
+  });
 
   // クリック（ActionManager）
   box.actionManager = new BABYLON.ActionManager(scene);
@@ -214,13 +302,14 @@ function showToast(msg) {
 // ─────────────────────────────────────────────
 // Vue3 アプリ
 // ─────────────────────────────────────────────
-const { createApp, ref } = Vue;
+const { createApp, ref, onMounted, onUnmounted } = Vue;
 
 createApp({
   setup() {
-    const rotating = ref(true);
-    const ledOn    = ref(false);
+    const rotating   = ref(true);
+    const ledOn      = ref(false);
     const requesting = ref(false);
+    const serverTime = ref('');
 
     // 自転フラグをグローバルに同期
     window.__vueRotating = true;
@@ -239,7 +328,7 @@ createApp({
       requesting.value = true;
 
       const nextOn  = !ledOn.value;
-      const endpoint = nextOn ? '/api/led/on' : '/api/led/off';
+      const endpoint = nextOn ? '/api/device/on' : '/api/device/off';
 
       try {
         const res = await fetch(endpoint, { method: 'POST' });
@@ -260,10 +349,34 @@ createApp({
       }
     }
 
+    // ─── WebSocket サーバー時刻受信 ──────────────
+    let ws = null;
+
+    function connectWs() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}`);
+      ws.addEventListener('message', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'clock') {
+            // ISO 文字列をローカル時刻に変換して表示
+            serverTime.value = new Date(data.time).toLocaleString('ja-JP');
+          }
+        } catch (_) {}
+      });
+      ws.addEventListener('close', () => {
+        // 切断後 3 秒で再接続
+        setTimeout(connectWs, 3000);
+      });
+    }
+
+    onMounted(connectWs);
+    onUnmounted(() => { if (ws) ws.close(); });
+
     // Vue 側の関数をグローバルに公開（Babylon から呼ぶ）
     window.__vueApp = { onBoxClick };
 
-    return { rotating, ledOn, toggleRotate, resetCamera };
+    return { rotating, ledOn, requesting, serverTime, toggleRotate, resetCamera };
   }
 }).mount('#app');
 </script>
