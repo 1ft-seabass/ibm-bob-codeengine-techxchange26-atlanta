@@ -1,5 +1,59 @@
 require('dotenv').config();
 
+const fs   = require('fs');
+const path = require('path');
+
+// ─────────────────────────────────────────────
+// 起動時環境変数チェック
+// .env.example の値を基準に「未設定」「サンプル値のまま」を警告する
+// ─────────────────────────────────────────────
+(function checkEnv() {
+  const examplePath = path.join(__dirname, '.env.example');
+  if (!fs.existsSync(examplePath)) return;
+
+  // .env.example をパースして required / optional に分類
+  // コメントアウト行 (# KEY=value) はオプション扱い
+  const requiredVars = {};
+  const optionalVars = {};
+  fs.readFileSync(examplePath, 'utf8').split('\n').forEach((line) => {
+    const required = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (required) { requiredVars[required[1]] = required[2].trim(); return; }
+    const optional = line.match(/^#\s*([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (optional) { optionalVars[optional[1]] = optional[2].trim(); }
+  });
+
+  let hasWarning = false;
+
+  for (const [key, exampleVal] of Object.entries(requiredVars)) {
+    const actual = process.env[key];
+    if (!actual) {
+      console.warn(`[env] WARN: ${key} is not set`);
+      hasWarning = true;
+    } else if (actual === exampleVal) {
+      console.warn(`[env] WARN: ${key} is still the example value (may not work)`);
+      hasWarning = true;
+    } else {
+      console.log(`[env] OK: ${key}`);
+    }
+  }
+
+  for (const [key, exampleVal] of Object.entries(optionalVars)) {
+    const actual = process.env[key];
+    if (!actual) {
+      console.log(`[env] OK (optional, not set): ${key}`);
+    } else if (actual === exampleVal) {
+      console.warn(`[env] WARN: ${key} is still the example value (may not work)`);
+      hasWarning = true;
+    } else {
+      console.log(`[env] OK (optional): ${key}`);
+    }
+  }
+
+  if (!hasWarning) {
+    console.log('[env] all env vars are configured');
+  }
+})();
+
 const { Hono } = require('hono');
 const { serve } = require('@hono/node-server');
 const { serveStatic } = require('@hono/node-server/serve-static');
@@ -15,6 +69,7 @@ const MQTT_PROTOCOL          = process.env.MQTT_PROTOCOL;
 const MQTT_USERNAME          = process.env.MQTT_USERNAME;
 const MQTT_PASSWORD          = process.env.MQTT_PASSWORD;
 const MQTT_IOT_CONTROL_LED   = process.env.MQTT_IOT_CONTROL_LED;
+const MQTT_IOT_CONTROL_LED2  = process.env.MQTT_IOT_CONTROL_LED2;
 const MQTT_IOT_CONTROL_SERVO = process.env.MQTT_IOT_CONTROL_SERVO;
 
 let mqttClient = null;
@@ -89,10 +144,14 @@ app.get('/api/hello', (c) => {
 
 app.post('/api/device/on', async (c) => {
   try {
-    await Promise.all([
+    const publishes = [
       publishAsync(MQTT_IOT_CONTROL_LED,   JSON.stringify({ type: 'led', r: 255, g: 255, b: 255 })),
       publishAsync(MQTT_IOT_CONTROL_SERVO, JSON.stringify({ direction: 'cw', speed: 3 })),
-    ]);
+    ];
+    if (MQTT_IOT_CONTROL_LED2) {
+      publishes.push(publishAsync(MQTT_IOT_CONTROL_LED2, JSON.stringify({ type: 'led', r: 255, g: 255, b: 255 })));
+    }
+    await Promise.all(publishes);
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ ok: false, error: err.message }, 500);
@@ -101,10 +160,14 @@ app.post('/api/device/on', async (c) => {
 
 app.post('/api/device/off', async (c) => {
   try {
-    await Promise.all([
+    const publishes = [
       publishAsync(MQTT_IOT_CONTROL_LED,   JSON.stringify({ type: 'led', r: 0, g: 0, b: 0 })),
       publishAsync(MQTT_IOT_CONTROL_SERVO, JSON.stringify({ command: 'stop' })),
-    ]);
+    ];
+    if (MQTT_IOT_CONTROL_LED2) {
+      publishes.push(publishAsync(MQTT_IOT_CONTROL_LED2, JSON.stringify({ type: 'led', r: 0, g: 0, b: 0 })));
+    }
+    await Promise.all(publishes);
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ ok: false, error: err.message }, 500);
